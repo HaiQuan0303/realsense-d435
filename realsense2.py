@@ -1,8 +1,8 @@
 import pyrealsense2 as rs
 import numpy as np
 import cv2
-import os
-import pandas as pd
+import threading
+
 
 class StreamInfo:
     def __init__(self, _streamType, _w, _h, _format, _fps):
@@ -12,157 +12,135 @@ class StreamInfo:
         self.format = _format
         self.frameRate = _fps
 
-    def getStreamInfo(self):
+    def streamInfo(self):
         if self.streamType == 'color':
             type = rs.stream.color
+            if self.format == 'bgr8':
+                data_format = rs.format.bgr8
+            else:
+                return False
+
         elif self.streamType == 'depth':
             type = rs.stream.depth
-        else:
-            type = None
+            if self.format == 'z16':
+                data_format = rs.format.z16
+            else:
+                return False
 
-        if self.format == 'bgr8':
-            data_format = rs.format.bgr8
-        elif self.format == 'z16':
-            data_format = rs.format.z16
         else:
-            type = None
+            return False
 
         streamInfo = {'streamType' : type, 'width' : self.width, 'height' : self.height,
-                      'format' : data_format, 'frameRate' : self.frameRate}
-
+                          'format' : data_format, 'frameRate' : self.frameRate}
         return streamInfo
 
+
 class RealSense2:
-    def __init__(self, _recordFilePath, _streamInfo):
-        self.streamInfo = _streamInfo
+    #Device serial number is '001622072448'
+    def __init__(self, _streamInfos, _recordFilePath = 'record_bag_file.bag',  _devSerial = '001622072448'):
+        self.streamInfos = _streamInfos
         self.recordFilePath = _recordFilePath
+        self.devSerial = _devSerial
+        self.isRecording = False
+        self.color_frame = []
+        self.depth_frame = []
+
+        self._color_frame = []
+        self._depth_frame = []
+
+        self.pipeline = rs.pipeline()
+        self.config = rs.config()
+        self.config.enable_device(self.devSerial)
+
+        self.release = False
+        self.isUpdateConfig = False
+
+        threading.Thread(target=self.record, name='record').start()
+
+
+    def record(self):
+        self.config.enable_record_to_file(self.recordFilePath)
+        while True:
+            types = []  #can be color, depth or both
+            for streamInfo in self.streamInfos:
+                self.config.enable_stream(streamInfo['streamType'], streamInfo['width'], streamInfo['height'],
+                                          streamInfo['format'], streamInfo['frameRate'])
+                types.append(streamInfo['streamType'])
+
+            self.pipeline.start(self.config)
+            while True:
+                frames = self.pipeline.wait_for_frames()
+
+                if rs.stream.color in types:
+                    self._color_frame = frames.get_color_frame()
+
+                if rs.stream.depth in types:
+                    self._depth_frame = frames.get_depth_frame()
+
+                if self.isUpdateConfig:
+                    break
+            # continue
+            if self.release:
+                self.pipeline.stop()
+                break
+            else:
+                self.pipeline.stop()
+                self.isUpdateConfig = False
+                continue
 
     def capture(self):
-        pipeline = rs.pipeline()
-        config = rs.config()
-        config.enable_stream(self.streamInfo['streamType'], self.streamInfo['width'],
-                             self.streamInfo['height'], self.streamInfo['format'],
-                             self.streamInfo['frameRate'])
+        if self.isRecording:
+            print('Device is busy')
+            return False
+        while True:
+            if self._color_frame:
+                self.color_frame = np.asanyarray(self._color_frame.get_data())
+            if self._depth_frame:
+                self.depth_frame = np.asanyarray(self._depth_frame.get_data())
 
-        pipeline.start(config)
-        try:
-            colorizer = rs.colorizer()
-            while True:
-                frames = pipeline.wait_for_frames()
+            if (not self._color_frame) and (not self._depth_frame):
+                continue
 
-                if self.streamInfo['streamType'] == rs.stream.color:
-                    color_frame = frames.get_color_frame()
-                    color_image = np.asanyarray(color_frame.get_data())
-                    
-                    cv2.imshow('Color image', color_image)
-                    k = cv2.waitKey(1) & 0xFF
-                    if k == ord('q'):
-                        cv2.imwrite(self.recordFilePath, color_image)
-                        cv2.destroyAllWindows()
-                        break
+            break
 
-                else:
-                    depth_frame = frames.get_depth_frame()
-                    depth_image = np.asanyarray(depth_frame.get_data())
-                    depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
+        print('Succeed capture')
+        return True
 
-                    # cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
-                    # depth_frame = frames.get_depth_frame()
-                    # depth_color_frame = colorizer.colorize(depth_frame)
-                    # depth_image = np.asanyarray(depth_color_frame.get_data())
-
-                    cv2.imshow('Depth image', depth_colormap)
-                    # df = pd.DataFrame(data=depth_image)
-                    k = cv2.waitKey(1) & 0xFF
-                    if k == ord('q'):
-                        cv2.imwrite(self.recordFilePath, depth_colormap)
-                        # df.to_csv('depth_data.csv', index=False)
-                        cv2.destroyAllWindows()
-                        break
-                    # cv2.destroyAllWindows()
-
-
-        finally:
-            pipeline.stop()
-
-    def record(self, record_time):
-        pipeline = rs.pipeline()
-        config = rs.config()
-        config.enable_record_to_file(self.recordFilePath)
-        config.enable_stream(self.streamInfo['streamType'], self.streamInfo['width'],
-                             self.streamInfo['height'], self.streamInfo['format'],
-                             self.streamInfo['frameRate'])
-
-        pipeline.start(config)
+    def startRecording(self, record_time):
+        print('Start record')
+        self.isRecording = True
         t1 = cv2.getTickCount()
-        try:
-            while True:
-                frames = pipeline.wait_for_frames()
 
-                if self.streamInfo['streamType'] == rs.stream.color:
-                    color_frame = frames.get_color_frame()
-                    color_image = np.asanyarray(color_frame.get_data())
+        while self.isRecording:
 
-                    cv2.imshow('Color image', color_image)
-                    cv2.waitKey(1)
-                    t2 = cv2.getTickCount()
-                    if (t2 - t1)/cv2.getTickFrequency() > record_time:
-                        break
+            if self._color_frame and self._depth_frame:
+                color_frame = np.asanyarray(self._color_frame.get_data())
+                depth_frame = np.asanyarray(self._depth_frame.get_data())
 
-                else:
-                    depth_frame = frames.get_depth_frame()
-                    depth_image = np.asanyarray(depth_frame.get_data())
-                    depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
+            elif self._color_frame:
+                color_frame = np.asanyarray(self._color_frame.get_data())
 
-                    cv2.imshow('Depth image', depth_colormap)
-                    print(depth_image)
-                    cv2.waitKey(1)
-                    t2 = cv2.getTickCount()
-                    if (t2 - t1) / cv2.getTickFrequency() > record_time:
-                        break
+            elif self._depth_frame:
+                depth_frame = np.asanyarray(self._depth_frame.get_data())
 
-        finally:
-            pipeline.stop()
+            else:
+                continue
 
-    def displayRecordData(self):
-        pipeline = rs.pipeline()
-        config = rs.config()
-        config.enable_device_from_file(self.recordFilePath, repeat_playback=False)
-        config.enable_stream(self.streamInfo['streamType'], self.streamInfo['width'],
-                             self.streamInfo['height'], self.streamInfo['format'],
-                             self.streamInfo['frameRate'])
+            if (cv2.getTickCount() - t1)/cv2.getTickFrequency() > record_time:
+                break
 
-        pipeline.start(config)
+        print('End record')
+        self.isRecording = False
+        self.release = True
 
-        try:
-            colorizer = rs.colorizer()
-            while True:
-                frames = pipeline.wait_for_frames()
+    def stopRecording(self):
+        self.isRecording = False
+        print('Stop record')
 
-                if self.streamInfo['streamType'] == rs.stream.color:
-                    color_frame = frames.get_color_frame()
-                    color_image = np.asanyarray(color_frame.get_data())
-
-                    cv2.imshow('Color image', color_image)
-                    k = cv2.waitKey(1) & 0xFF
-                    if k == ord('q'):
-                        break
-
-                else:
-                    depth_frame = frames.get_depth_frame()
-                    depth_color_frame = colorizer.colorize(depth_frame)
-                    depth_image = np.asanyarray(depth_color_frame.get_data())
-
-                    # depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
-                    # cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
-
-                    cv2.imshow('Depth image', depth_image)
-                    k = cv2.waitKey(1) & 0xFF
-                    if k == ord('q'):
-                        break
-        finally:
-            pipeline.stop()
-
+    def updateConfig(self, _streamInfos):
+        self.isUpdateConfig = True
+        self.streamInfos = _streamInfos
+        print("Change configuration")
 
 
 
