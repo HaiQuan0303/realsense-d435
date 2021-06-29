@@ -114,7 +114,13 @@ class RealSense2:
         while self.isRecording:
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     
+=======
+    #Two threads can't record on same time
+    #When a thread is recording then a different thread also want to record
+    #2nd thread will must wait until 1st thread stop record
+>>>>>>> parent of 4c5e326... Delete some comment lines
     def startRecording(self, max_recordTime, lock):
         lock.acquire()
         self.safe = True
