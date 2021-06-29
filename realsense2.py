@@ -119,9 +119,7 @@ class RealSense2:
             self.pipeline.stop()
 
 
-    #Two threads can't record on same time
-    #When a thread is recording then a different thread also want to record
-    #2nd thread will must wait until 1st thread stop record
+    
     def startRecording(self, max_recordTime, lock):
         lock.acquire()
         self.safe = True
