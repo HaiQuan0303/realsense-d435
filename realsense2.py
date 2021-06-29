@@ -113,24 +113,21 @@ class RealSense2:
 
         while self.isRecording:
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-    
-=======
+
+
     #Two threads can't record on same time
     #When a thread is recording then a different thread also want to record
     #2nd thread will must wait until 1st thread stop record
->>>>>>> parent of 4c5e326... Delete some comment lines
+
     def startRecording(self, max_recordTime, lock):
         lock.acquire()
         self.safe = True
         self.record(max_recordTime)
         lock.release()
-=======
+
             if self._color_frame and self._depth_frame:
                 color_frame = np.asanyarray(self._color_frame.get_data())
                 depth_frame = np.asanyarray(self._depth_frame.get_data())
->>>>>>> parent of e904752... Edit Realsense2 class
 
             elif self._color_frame:
                 color_frame = np.asanyarray(self._color_frame.get_data())
