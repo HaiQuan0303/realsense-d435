@@ -1,7 +1,7 @@
 import pyrealsense2 as rs
 import numpy as np
+import cv2
 import threading
-import time
 
 
 class StreamInfo:
@@ -35,113 +35,121 @@ class StreamInfo:
         return streamInfo
 
 
-    #Edit Realsense2 class:
-
-        #Edit __init__()
-            #Remove record thread
-            #Configure camera
-
-        #Edit record()
-            #Can only run when is called by startRecording()
-            #It can stop when stopRecording() is called or timeout
-            #Can only run with single thread
-
-        #startRecording()
-            #Using lock method of threading library in python3
-            #It can avoid conflict between threads
-
 class RealSense2:
     #Device serial number is '001622072448'
     def __init__(self, _streamInfos, _recordFilePath = 'record_bag_file.bag',  _devSerial = '001622072448'):
         self.streamInfos = _streamInfos
         self.recordFilePath = _recordFilePath
         self.devSerial = _devSerial
-
         self.isRecording = False
         self.color_frame = []
         self.depth_frame = []
 
-        self.safe = False
+        self._color_frame = []
+        self._depth_frame = []
 
         self.pipeline = rs.pipeline()
         self.config = rs.config()
         self.config.enable_device(self.devSerial)
 
-        self.types = []  # can be color, depth or both
-        for streamInfo in self.streamInfos:
-            self.config.enable_stream(streamInfo['streamType'], streamInfo['width'], streamInfo['height'],
-                                      streamInfo['format'], streamInfo['frameRate'])
-            self.types.append(streamInfo['streamType'])
+        self.release = False
+        self.isUpdateConfig = False
 
-    def record(self, max_recordTime):
-        print('Start record')
-        self.isRecording = True
+        threading.Thread(target=self.record, name='record').start()
+
+
+    def record(self):
         self.config.enable_record_to_file(self.recordFilePath)
-        self.pipeline.start(self.config)
-        while self.safe:
-            try:
-                record_thread = threading.Timer(max_recordTime, self.stopRecording)
-                record_thread.start()
-                while self.isRecording:
-                    print('Recording')
-                    time.sleep(1)
-                record_thread.cancel()
-            finally:
+        while True:
+            types = []  #can be color, depth or both
+            for streamInfo in self.streamInfos:
+                self.config.enable_stream(streamInfo['streamType'], streamInfo['width'], streamInfo['height'],
+                                          streamInfo['format'], streamInfo['frameRate'])
+                types.append(streamInfo['streamType'])
+
+            self.pipeline.start(self.config)
+            while True:
+                frames = self.pipeline.wait_for_frames()
+
+                if rs.stream.color in types:
+                    self._color_frame = frames.get_color_frame()
+
+                if rs.stream.depth in types:
+                    self._depth_frame = frames.get_depth_frame()
+
+                if self.isUpdateConfig:
+                    break
+            # continue
+            if self.release:
                 self.pipeline.stop()
                 break
+            else:
+                self.pipeline.stop()
+                self.isUpdateConfig = False
+                continue
 
     def capture(self):
         if self.isRecording:
             print('Device is busy')
             return False
-        try:
-            self.pipeline.start(self.config)
-            while True:
-                color_frame = []
-                depth_frame = []
-                frames = self.pipeline.wait_for_frames()
-                if rs.stream.color in self.types:
-                    color_frame = frames.get_color_frame()
-                    self.color_frame = np.asanyarray(color_frame.get_data())
-                if rs.stream.depth in self.types:
-                    depth_frame = frames.get_depth_frame()
-                    self.depth_frame = np.asanyarray(depth_frame.get_data())
+        while True:
+            if self._color_frame:
+                self.color_frame = np.asanyarray(self._color_frame.get_data())
+            if self._depth_frame:
+                self.depth_frame = np.asanyarray(self._depth_frame.get_data())
 
-                if not color_frame and not depth_frame:
-                    continue
+            if (not self._color_frame) and (not self._depth_frame):
+                continue
 
-                break
+            break
 
-            print('Succeed capture')
-            return True
+        print('Succeed capture')
+        return True
 
-        finally:
-            self.pipeline.stop()
+    def startRecording(self, record_time):
+        print('Start record')
+        self.isRecording = True
+        t1 = cv2.getTickCount()
 
+        while self.isRecording:
 
+<<<<<<< HEAD
     
     def startRecording(self, max_recordTime, lock):
         lock.acquire()
         self.safe = True
         self.record(max_recordTime)
         lock.release()
+=======
+            if self._color_frame and self._depth_frame:
+                color_frame = np.asanyarray(self._color_frame.get_data())
+                depth_frame = np.asanyarray(self._depth_frame.get_data())
+>>>>>>> parent of e904752... Edit Realsense2 class
 
+            elif self._color_frame:
+                color_frame = np.asanyarray(self._color_frame.get_data())
+
+            elif self._depth_frame:
+                depth_frame = np.asanyarray(self._depth_frame.get_data())
+
+            else:
+                continue
+
+            if (cv2.getTickCount() - t1)/cv2.getTickFrequency() > record_time:
+                break
+
+        print('End record')
+        self.isRecording = False
+        self.release = True
 
     def stopRecording(self):
         self.isRecording = False
         print('Stop record')
 
     def updateConfig(self, _streamInfos):
-        if self.isRecording:
-            print("Is recording, can't change configuration")
-            return False
-
+        self.isUpdateConfig = True
         self.streamInfos = _streamInfos
-        self.types = []  # can be color, depth or both
-        for streamInfo in self.streamInfos:
-            self.config.enable_stream(streamInfo['streamType'], streamInfo['width'], streamInfo['height'],
-                                      streamInfo['format'], streamInfo['frameRate'])
-            self.types.append(streamInfo['streamType'])
+        print("Change configuration")
 
 
 
